@@ -490,9 +490,38 @@ mkdir -p /run/flannel
 # so kubelet warns instead of refusing to start. This flag can be removed once
 # cgroup v1 support is no longer needed.
 EXTRA_KUBELET_ARGS=""
+
 if [ ! -f /sys/fs/cgroup/cgroup.controllers ]; then
     echo "Detected cgroup v1 — adding kubelet compatibility flag (fail-cgroupv1=false)"
     EXTRA_KUBELET_ARGS="--kubelet-arg=fail-cgroupv1=false"
+fi
+
+# Detect rootless container environment (e.g. podman rootless, Docker with
+# userns-remap). When rootless is detected:
+# - KubeletInUserNamespace=true: kubelet ignores /dev/kmsg and OOM score
+#   which are inaccessible in a user namespace (alpha in k8s 1.35)
+# - cgroup-root: point kubelet at the delegated user cgroup subtree so it
+#   can create pod cgroups without needing the host cgroup root
+# Check whether UID 0 in this container maps to non-zero on the host.
+# This is the canonical test for rootless: privileged rootless Podman
+# containers can often read /dev/kmsg via CAP_SYSLOG, but the uid_map
+# never lies about whether we are in a user namespace.
+_HOST_UID=$(awk 'NR==1 && $1==0 {print $2}' /proc/self/uid_map 2>/dev/null)
+if [ "${_HOST_UID:-0}" != "0" ]; then
+    echo "Detected rootless environment (uid 0 → host uid ${_HOST_UID}) — adding kubelet user-namespace flags"
+    # KubeletInUserNamespace: kubelet ignores /dev/kmsg and oom_score_adj
+    # which are inaccessible in a user namespace.
+    EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=feature-gates=KubeletInUserNamespace=true"
+
+    # Parse /proc/self/cgroup to find the delegated user cgroup subtree.
+    # kubelet --cgroup-root takes the cgroup-namespace path (no /sys/fs/cgroup prefix).
+    SELF_CGROUP=$(grep '^0::' /proc/self/cgroup 2>/dev/null | cut -d: -f3)
+    USER_CGROUP_ROOT=$(echo "$SELF_CGROUP" \
+        | grep -oE '/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service')
+    if [ -n "$USER_CGROUP_ROOT" ] && [ -w "/sys/fs/cgroup${USER_CGROUP_ROOT}" ]; then
+        echo "Using delegated user cgroup root: ${USER_CGROUP_ROOT}"
+        EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroup-root=${USER_CGROUP_ROOT}"
+    fi
 fi
 
 # Docker Desktop can briefly start the container before its bridge default route

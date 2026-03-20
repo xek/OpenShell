@@ -120,25 +120,47 @@ const WELL_KNOWN_SOCKET_PATHS: &[&str] = &[
 /// deploy work begins. On failure it produces a user-friendly error with
 /// actionable recovery steps instead of a raw bollard connection error.
 pub async fn check_docker_available() -> Result<DockerPreflight> {
-    // Step 1: Try to connect using bollard's default resolution
-    // (respects DOCKER_HOST, then falls back to /var/run/docker.sock).
-    let docker = match Docker::connect_with_local_defaults() {
-        Ok(d) => d,
-        Err(err) => {
-            return Err(docker_not_reachable_error(
-                &format!("{err}"),
-                "Failed to create Docker client",
-            ));
+    // Try to connect and ping in one step — returns Ok(Docker) if responsive.
+    async fn try_connect(docker: Docker) -> Option<Docker> {
+        docker.ping().await.ok().map(|_| docker)
+    }
+
+    // Step 1: Try bollard's default resolution (DOCKER_HOST, then /var/run/docker.sock).
+    let docker = if let Ok(d) = Docker::connect_with_local_defaults() {
+        if let Some(d) = try_connect(d).await {
+            Some(d)
+        } else {
+            None
         }
+    } else {
+        None
     };
 
-    // Step 2: Ping the daemon to confirm it's responsive.
-    if let Err(err) = docker.ping().await {
-        return Err(docker_not_reachable_error(
-            &format!("{err}"),
-            "Docker socket exists but the daemon is not responding",
-        ));
-    }
+    // Step 2: If default failed and DOCKER_HOST is not set, try well-known
+    // alternative sockets (Podman, Colima, OrbStack, etc.).
+    let docker = if docker.is_none() && std::env::var("DOCKER_HOST").is_err() {
+        let mut found = None;
+        for path in candidate_sockets() {
+            if !std::path::Path::new(&path).exists() {
+                continue;
+            }
+            if let Ok(d) = Docker::connect_with_unix(&path, 120, bollard::API_DEFAULT_VERSION) {
+                if let Some(d) = try_connect(d).await {
+                    tracing::debug!("Auto-detected container runtime socket: {path}");
+                    found = Some(d);
+                    break;
+                }
+            }
+        }
+        found
+    } else {
+        docker
+    };
+
+    let docker = match docker {
+        Some(d) => d,
+        None => return Err(docker_not_reachable_error("no responsive socket found", "Failed to connect to a container runtime")),
+    };
 
     // Step 3: Query version info (best-effort — don't fail on this).
     let version = match docker.version().await {
@@ -147,6 +169,43 @@ pub async fn check_docker_available() -> Result<DockerPreflight> {
     };
 
     Ok(DockerPreflight { docker, version })
+}
+
+/// Candidate socket paths to probe when the default fails, in priority order.
+fn candidate_sockets() -> Vec<String> {
+    let mut paths = Vec::new();
+
+    // Podman rootless: $XDG_RUNTIME_DIR/podman/podman.sock
+    if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
+        paths.push(format!("{xdg}/podman/podman.sock"));
+    }
+    // Fallback for Podman rootless when XDG_RUNTIME_DIR is not set: read UID
+    // from /proc/self/status (Linux only, no unsafe required).
+    if let Some(uid) = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("Uid:"))?
+                .split_whitespace()
+                .nth(1)
+                .and_then(|u| u.parse::<u32>().ok())
+        })
+    {
+        let path = format!("/run/user/{uid}/podman/podman.sock");
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+
+    if let Some(home) = home_dir() {
+        // Colima
+        paths.push(format!("{home}/.colima/default/docker.sock"));
+        paths.push(format!("{home}/.colima/docker.sock"));
+        // OrbStack
+        paths.push(format!("{home}/.orbstack/run/docker.sock"));
+    }
+
+    paths
 }
 
 /// Build a rich, user-friendly error when Docker is not reachable.
@@ -209,23 +268,15 @@ fn docker_not_reachable_error(raw_err: &str, summary: &str) -> miette::Report {
 fn find_alternative_sockets() -> Vec<String> {
     let mut found = Vec::new();
 
-    // Check well-known static paths
     for path in WELL_KNOWN_SOCKET_PATHS {
         if std::path::Path::new(path).exists() {
             found.push(path.to_string());
         }
     }
 
-    // Check home-relative paths
-    if let Some(home) = home_dir() {
-        let home_sockets = [
-            format!("{home}/.colima/docker.sock"),
-            format!("{home}/.orbstack/run/docker.sock"),
-        ];
-        for path in &home_sockets {
-            if std::path::Path::new(path).exists() && !found.contains(path) {
-                found.push(path.clone());
-            }
+    for path in candidate_sockets() {
+        if std::path::Path::new(&path).exists() && !found.contains(&path) {
+            found.push(path);
         }
     }
 
