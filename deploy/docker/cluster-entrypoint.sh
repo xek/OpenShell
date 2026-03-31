@@ -511,26 +511,23 @@ if [ "${_HOST_UID:-0}" != "0" ]; then
     echo "Detected rootless environment (uid 0 → host uid ${_HOST_UID}) — adding kubelet user-namespace flags"
     # KubeletInUserNamespace: kubelet ignores /dev/kmsg and oom_score_adj
     # which are inaccessible in a user namespace.
+    # enforce-node-allocatable=none: skips cpuset/hugetlb controller checks
+    # that fail when those controllers are not delegated to the user session.
     EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=feature-gates=KubeletInUserNamespace=true"
+    EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=enforce-node-allocatable=none"
 
     # Parse /proc/self/cgroup to find the delegated user cgroup subtree.
     # kubelet --cgroup-root takes the cgroup-namespace path (no /sys/fs/cgroup prefix).
     # Skip if the path contains user@*.service — kubelet 1.35 rejects these as
     # "secure" (nsdelegate-protected) on some systemd configurations.
+    # Find the writable user cgroup subtree for kubelet's cgroup-root.
+    # With enforce-node-allocatable=none, cpuset/hugetlb are not required.
     SELF_CGROUP=$(grep '^0::' /proc/self/cgroup 2>/dev/null | cut -d: -f3)
     USER_CGROUP_ROOT=$(echo "$SELF_CGROUP" \
-        | grep -oE '/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service/user\.slice')
+        | grep -oE '/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service')
     if [ -n "$USER_CGROUP_ROOT" ] && [ -w "/sys/fs/cgroup${USER_CGROUP_ROOT}" ]; then
-        # Verify all controllers kubelet needs are available at this cgroup level.
-        # If cpuset or hugetlb are missing, skip cgroup-root — kubelet will reject it.
-        CGROUP_CONTROLLERS=$(cat "/sys/fs/cgroup${USER_CGROUP_ROOT}/cgroup.controllers" 2>/dev/null || true)
-        if echo "$CGROUP_CONTROLLERS" | grep -q "cpuset" && \
-           echo "$CGROUP_CONTROLLERS" | grep -q "hugetlb"; then
-            echo "Using delegated user cgroup root: ${USER_CGROUP_ROOT}"
-            EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroup-root=${USER_CGROUP_ROOT}"
-        else
-            echo "Skipping cgroup-root: missing controllers at ${USER_CGROUP_ROOT} (have: ${CGROUP_CONTROLLERS})"
-        fi
+        echo "Using delegated user cgroup root: ${USER_CGROUP_ROOT}"
+        EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroup-root=${USER_CGROUP_ROOT}"
     fi
 fi
 
