@@ -521,8 +521,16 @@ if [ "${_HOST_UID:-0}" != "0" ]; then
     USER_CGROUP_ROOT=$(echo "$SELF_CGROUP" \
         | grep -oE '/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service/user\.slice')
     if [ -n "$USER_CGROUP_ROOT" ] && [ -w "/sys/fs/cgroup${USER_CGROUP_ROOT}" ]; then
-        echo "Using delegated user cgroup root: ${USER_CGROUP_ROOT}"
-        EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroup-root=${USER_CGROUP_ROOT}"
+        # Verify all controllers kubelet needs are available at this cgroup level.
+        # If cpuset or hugetlb are missing, skip cgroup-root — kubelet will reject it.
+        CGROUP_CONTROLLERS=$(cat "/sys/fs/cgroup${USER_CGROUP_ROOT}/cgroup.controllers" 2>/dev/null || true)
+        if echo "$CGROUP_CONTROLLERS" | grep -q "cpuset" && \
+           echo "$CGROUP_CONTROLLERS" | grep -q "hugetlb"; then
+            echo "Using delegated user cgroup root: ${USER_CGROUP_ROOT}"
+            EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroup-root=${USER_CGROUP_ROOT}"
+        else
+            echo "Skipping cgroup-root: missing controllers at ${USER_CGROUP_ROOT} (have: ${CGROUP_CONTROLLERS})"
+        fi
     fi
 fi
 
