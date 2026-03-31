@@ -515,9 +515,11 @@ if [ "${_HOST_UID:-0}" != "0" ]; then
 
     # Parse /proc/self/cgroup to find the delegated user cgroup subtree.
     # kubelet --cgroup-root takes the cgroup-namespace path (no /sys/fs/cgroup prefix).
+    # Skip if the path contains user@*.service — kubelet 1.35 rejects these as
+    # "secure" (nsdelegate-protected) on some systemd configurations.
     SELF_CGROUP=$(grep '^0::' /proc/self/cgroup 2>/dev/null | cut -d: -f3)
     USER_CGROUP_ROOT=$(echo "$SELF_CGROUP" \
-        | grep -oE '/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service')
+        | grep -oE '/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service/user\.slice')
     if [ -n "$USER_CGROUP_ROOT" ] && [ -w "/sys/fs/cgroup${USER_CGROUP_ROOT}" ]; then
         echo "Using delegated user cgroup root: ${USER_CGROUP_ROOT}"
         EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroup-root=${USER_CGROUP_ROOT}"
