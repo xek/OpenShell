@@ -516,7 +516,6 @@ if [ "${_HOST_UID:-0}" != "0" ]; then
     # in the user session (not always available without system configuration).
     EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=feature-gates=KubeletInUserNamespace=true"
     EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=enforce-node-allocatable=none"
-    EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroups-per-qos=false"
 
     # Find the writable user cgroup subtree for kubelet's cgroup-root.
     # Only set if cpuset and hugetlb are delegated — kubelet rejects the path
