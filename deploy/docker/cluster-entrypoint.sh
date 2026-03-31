@@ -526,13 +526,12 @@ if [ "${_HOST_UID:-0}" != "0" ]; then
         | grep -oE '/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service')
     if [ -n "$USER_CGROUP_ROOT" ] && [ -w "/sys/fs/cgroup${USER_CGROUP_ROOT}" ]; then
         CGROUP_CONTROLLERS=$(cat "/sys/fs/cgroup${USER_CGROUP_ROOT}/cgroup.controllers" 2>/dev/null || true)
-        if echo "$CGROUP_CONTROLLERS" | grep -q "cpuset" && \
-           echo "$CGROUP_CONTROLLERS" | grep -q "hugetlb"; then
-            echo "Using delegated user cgroup root: ${USER_CGROUP_ROOT}"
+        if echo "$CGROUP_CONTROLLERS" | grep -q "cpuset"; then
+            echo "Using delegated user cgroup root: ${USER_CGROUP_ROOT} (controllers: ${CGROUP_CONTROLLERS})"
             EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroup-root=${USER_CGROUP_ROOT}"
         else
-            echo "Warning: cpuset/hugetlb not delegated at ${USER_CGROUP_ROOT} — skipping cgroup-root (pod scheduling may fail)"
-            echo "  To fix: configure systemd to delegate these controllers to user sessions."
+            echo "Warning: cpuset not delegated at ${USER_CGROUP_ROOT} — skipping cgroup-root (pod scheduling will fail)"
+            echo "  To fix: configure systemd to delegate cpuset/hugetlb to user sessions."
         fi
     fi
 fi
