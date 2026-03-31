@@ -176,7 +176,25 @@ fn candidate_sockets() -> Vec<String> {
     let mut paths = Vec::new();
 
     // Podman rootless: $XDG_RUNTIME_DIR/podman/podman.sock
+    // Also probe Podman Machine sockets (*-api.sock) which take priority over
+    // the plain rootless socket when a machine is running.
     if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
+        // Podman Machine API sockets (named machines, e.g. podman-machine-default-api.sock)
+        if let Ok(entries) = std::fs::read_dir(format!("{xdg}/podman")) {
+            let mut machine_sockets: Vec<String> = entries
+                .flatten()
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if name.ends_with("-api.sock") {
+                        Some(format!("{xdg}/podman/{name}"))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            machine_sockets.sort();
+            paths.extend(machine_sockets);
+        }
         paths.push(format!("{xdg}/podman/podman.sock"));
     }
     // Fallback for Podman rootless when XDG_RUNTIME_DIR is not set: read UID
@@ -191,6 +209,26 @@ fn candidate_sockets() -> Vec<String> {
                 .and_then(|u| u.parse::<u32>().ok())
         })
     {
+        // Podman Machine sockets
+        if let Ok(entries) = std::fs::read_dir(format!("/run/user/{uid}/podman")) {
+            let mut machine_sockets: Vec<String> = entries
+                .flatten()
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if name.ends_with("-api.sock") {
+                        Some(format!("/run/user/{uid}/podman/{name}"))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            machine_sockets.sort();
+            for s in machine_sockets {
+                if !paths.contains(&s) {
+                    paths.push(s);
+                }
+            }
+        }
         let path = format!("/run/user/{uid}/podman/podman.sock");
         if !paths.contains(&path) {
             paths.push(path);
