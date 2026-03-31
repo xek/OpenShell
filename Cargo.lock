@@ -2964,7 +2964,9 @@ name = "openshell-server"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum 0.8.8",
+ "base64 0.22.1",
  "bytes",
  "clap",
  "futures",
@@ -2991,6 +2993,7 @@ dependencies = [
  "rand 0.9.2",
  "rcgen",
  "reqwest",
+ "ring",
  "russh",
  "rustls",
  "rustls-pemfile",

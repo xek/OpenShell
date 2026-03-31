@@ -10,6 +10,7 @@
 //! - mTLS support
 
 mod auth;
+pub mod credential_refresh;
 mod grpc;
 mod http;
 mod inference;
@@ -160,6 +161,10 @@ pub async fn run_server(config: Config, tracing_log_bus: TracingLogBus) -> Resul
     );
     spawn_kube_event_tailer(state.clone());
     ssh_tunnel::spawn_session_reaper(store.clone(), std::time::Duration::from_secs(3600));
+    credential_refresh::spawn_credential_refresh_loop(
+        store.clone(),
+        std::time::Duration::from_secs(600),
+    );
 
     // Create the multiplexed service
     let service = MultiplexService::new(state.clone());

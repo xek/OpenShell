@@ -368,3 +368,66 @@ openshell doctor exec -- ls -la /opt/openshell/bin/openshell-sandbox
 echo "=== DNS Configuration ==="
 openshell doctor exec -- cat /etc/rancher/k3s/resolv.conf
 ```
+
+## Rootless Podman Support
+
+OpenShell includes partial rootless Podman support. The cluster itself (k3s + gateway) works with rootless Podman, but sandbox pods cannot yet create network namespaces.
+
+### What works
+
+- k3s kubelet starts correctly (`KubeletInUserNamespace=true` + delegated user cgroup subtree in `cluster-entrypoint.sh`)
+- Gateway deploys and is healthy
+- Provider management, inference configuration, and credential refresh all work
+- Image building works with `--format docker` flag (see below)
+
+### System prerequisites (one-time setup)
+
+Enable cgroup delegation for cpuset and hugetlb — required for k3s kubelet cgroup validation:
+
+```bash
+sudo sh -c 'echo "+cpuset +hugetlb" >> /sys/fs/cgroup/cgroup.subtree_control'
+sudo sh -c 'echo "+cpuset +hugetlb" >> /sys/fs/cgroup/user.slice/cgroup.subtree_control'
+sudo sh -c 'echo "+cpuset +hugetlb" >> /sys/fs/cgroup/user.slice/user-$(id -u).slice/cgroup.subtree_control'
+```
+
+These writes don't survive reboots. For persistence, add a systemd drop-in:
+
+```ini
+# /etc/systemd/system/user@.service.d/delegate.conf
+[Service]
+Delegate=cpu cpuset io memory pids hugetlb
+```
+
+### Podman socket
+
+Start the podman user socket before deploying:
+
+```bash
+systemctl --user start podman.socket
+```
+
+### Image build format
+
+Podman builds images in OCI format by default, which drops the HEALTHCHECK instruction (required by the bootstrap). Build with `--format docker`:
+
+```bash
+DOCKER_PLATFORM=linux/amd64 mise run cluster
+```
+
+Or use a docker shim that adds `--format docker` automatically.
+
+### Sandbox pods (remaining gap)
+
+Sandbox pods crash with `EPERM` when the supervisor tries to create network namespaces and veth pairs. The root cause: in rootless k3s, pod capabilities (`SYS_ADMIN`, `NET_ADMIN`) are user-namespace-scoped and cannot create veth pairs bridging to the host network namespace.
+
+**What was tried:** `hostUsers: false` on sandbox pods would give the supervisor its own user namespace with virtual root, allowing veth creation. This was confirmed to work: `unshare --user --map-root-user --net; ip link add veth0 type veth peer veth1` succeeds inside the cluster container.
+
+**Current blocker:** containerd's noop process (used to pin the pod sandbox user+net namespace) hardcodes `/proc/self/exe` as the namespace holder binary and does not establish UID mapping before execing. The exec fails with `EPERM` in rootless environments. This is a containerd limitation — the noop binary path is not configurable.
+
+**Symptoms:**
+```
+Failed to create pod sandbox: failed to create network namespace for sandbox:
+  failed to start noop process for unshare: fork/exec /proc/self/exe: operation not permitted
+```
+
+**Next steps:** Either contribute a fix to containerd to support configurable noop binary or use UID mapping correctly before exec, or implement slirp4netns-based networking in the sandbox supervisor as an alternative to veth pairs.

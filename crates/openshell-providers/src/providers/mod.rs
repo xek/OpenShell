@@ -11,3 +11,4 @@ pub mod nvidia;
 pub mod openai;
 pub mod opencode;
 pub mod outlook;
+pub mod vertex;

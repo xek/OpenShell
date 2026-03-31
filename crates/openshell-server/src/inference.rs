@@ -222,13 +222,43 @@ struct UpsertedInferenceRoute {
     validation: Vec<ValidatedEndpoint>,
 }
 
+/// Resolve the base URL for a provider, with provider-specific construction
+/// logic where needed.
+fn resolve_base_url(
+    provider: &Provider,
+    provider_type: &str,
+    profile: &openshell_core::inference::InferenceProviderProfile,
+) -> Result<String, Status> {
+    // Vertex: construct the base URL from VERTEX_LOCATION + VERTEX_PROJECT.
+    if provider_type == "vertex" {
+        let location = find_provider_config_value(provider, &["VERTEX_LOCATION"])
+            .unwrap_or_else(|| "us-central1".to_string());
+        let location = location.trim().to_string();
+        return Ok(format!("https://{location}-aiplatform.googleapis.com"));
+    }
+
+    let base_url = find_provider_config_value(provider, profile.base_url_config_keys)
+        .unwrap_or_else(|| profile.default_base_url.to_string())
+        .trim()
+        .to_string();
+
+    if base_url.is_empty() {
+        return Err(Status::invalid_argument(format!(
+            "provider '{}' resolved to empty base_url",
+            provider.name
+        )));
+    }
+
+    Ok(base_url)
+}
+
 fn resolve_provider_route(provider: &Provider) -> Result<ResolvedProviderRoute, Status> {
     let provider_type = provider.r#type.trim().to_ascii_lowercase();
 
     let profile = openshell_core::inference::profile_for(&provider_type).ok_or_else(|| {
         Status::invalid_argument(format!(
             "provider '{name}' has unsupported type '{provider_type}' for cluster inference \
-                 (supported: openai, anthropic, nvidia)",
+                 (supported: openai, anthropic, nvidia, vertex)",
             name = provider.name
         ))
     })?;
@@ -241,20 +271,10 @@ fn resolve_provider_route(provider: &Provider) -> Result<ResolvedProviderRoute, 
             ))
         })?;
 
-    let base_url = find_provider_config_value(provider, profile.base_url_config_keys)
-        .unwrap_or_else(|| profile.default_base_url.to_string())
-        .trim()
-        .to_string();
-
-    if base_url.is_empty() {
-        return Err(Status::invalid_argument(format!(
-            "provider '{name}' resolved to empty base_url",
-            name = provider.name
-        )));
-    }
+    let base_url = resolve_base_url(provider, &provider_type, profile)?;
 
     Ok(ResolvedProviderRoute {
-        provider_type,
+        provider_type: provider_type.clone(),
         route: RouterResolvedRoute {
             name: provider.name.clone(),
             endpoint: base_url,

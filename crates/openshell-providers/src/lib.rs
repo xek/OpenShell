@@ -82,6 +82,7 @@ impl ProviderRegistry {
         registry.register(providers::openai::OpenaiProvider);
         registry.register(providers::anthropic::AnthropicProvider);
         registry.register(providers::nvidia::NvidiaProvider);
+        registry.register(providers::vertex::VertexProvider);
         registry.register(providers::gitlab::GitlabProvider);
         registry.register(providers::github::GithubProvider);
         registry.register(providers::outlook::OutlookProvider);
@@ -133,6 +134,7 @@ pub fn normalize_provider_type(input: &str) -> Option<&'static str> {
         "openai" => Some("openai"),
         "anthropic" => Some("anthropic"),
         "nvidia" => Some("nvidia"),
+        "vertex" => Some("vertex"),
         "gitlab" | "glab" => Some("gitlab"),
         "github" | "gh" => Some("github"),
         "outlook" => Some("outlook"),

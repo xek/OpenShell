@@ -86,6 +86,22 @@ static NVIDIA_PROFILE: InferenceProviderProfile = InferenceProviderProfile {
     default_headers: &[],
 };
 
+// Vertex AI. The refreshed OAuth2 access token is stored under
+// VERTEX_ACCESS_TOKEN by the gateway's credential refresh loop.
+//
+// The base URL is constructed by the gateway from VERTEX_PROJECT and
+// VERTEX_LOCATION stored in the provider config map. There is no single
+// override env var — the URL is always derived from project + location.
+static VERTEX_PROFILE: InferenceProviderProfile = InferenceProviderProfile {
+    provider_type: "vertex",
+    default_base_url: "https://us-central1-aiplatform.googleapis.com",
+    protocols: ANTHROPIC_PROTOCOLS,
+    credential_key_names: &["VERTEX_ACCESS_TOKEN", "GOOGLE_SERVICE_ACCOUNT_JSON"],
+    base_url_config_keys: &["VERTEX_LOCATION", "VERTEX_PROJECT"],
+    auth: AuthHeader::Bearer,
+    default_headers: &[("anthropic-version", "2023-06-01")],
+};
+
 /// Look up the inference provider profile for a given provider type.
 ///
 /// Returns `None` for provider types that don't support inference routing
@@ -95,6 +111,7 @@ pub fn profile_for(provider_type: &str) -> Option<&'static InferenceProviderProf
         "openai" => Some(&OPENAI_PROFILE),
         "anthropic" => Some(&ANTHROPIC_PROFILE),
         "nvidia" => Some(&NVIDIA_PROFILE),
+        "vertex" => Some(&VERTEX_PROFILE),
         _ => None,
     }
 }
@@ -176,6 +193,7 @@ mod tests {
         assert!(profile_for("openai").is_some());
         assert!(profile_for("anthropic").is_some());
         assert!(profile_for("nvidia").is_some());
+        assert!(profile_for("vertex").is_some());
         assert!(profile_for("OpenAI").is_some()); // case insensitive
     }
 
