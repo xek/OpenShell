@@ -515,6 +515,7 @@ if [ "${_HOST_UID:-0}" != "0" ]; then
     # that fail when those controllers are not delegated to the user session.
     EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=feature-gates=KubeletInUserNamespace=true"
     EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=enforce-node-allocatable=none"
+    EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroups-per-qos=false"
 
     # Parse /proc/self/cgroup to find the delegated user cgroup subtree.
     # kubelet --cgroup-root takes the cgroup-namespace path (no /sys/fs/cgroup prefix).
