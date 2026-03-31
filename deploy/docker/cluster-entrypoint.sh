@@ -507,29 +507,10 @@ fi
 # containers can often read /dev/kmsg via CAP_SYSLOG, but the uid_map
 # never lies about whether we are in a user namespace.
 _HOST_UID=$(awk 'NR==1 && $1==0 {print $2}' /proc/self/uid_map 2>/dev/null)
+ROOTLESS_MODE=false
 if [ "${_HOST_UID:-0}" != "0" ]; then
-    echo "Detected rootless environment (uid 0 → host uid ${_HOST_UID}) — adding kubelet user-namespace flags"
-    # KubeletInUserNamespace: kubelet ignores /dev/kmsg and oom_score_adj
-    # which are inaccessible in a user namespace.
-    # enforce-node-allocatable=none: skips cpuset/hugetlb controller checks
-    # that fail when those controllers are not delegated to the user session.
-    EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=feature-gates=KubeletInUserNamespace=true"
-    EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=enforce-node-allocatable=none"
-    EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroups-per-qos=false"
-
-    # Parse /proc/self/cgroup to find the delegated user cgroup subtree.
-    # kubelet --cgroup-root takes the cgroup-namespace path (no /sys/fs/cgroup prefix).
-    # Skip if the path contains user@*.service — kubelet 1.35 rejects these as
-    # "secure" (nsdelegate-protected) on some systemd configurations.
-    # Find the writable user cgroup subtree for kubelet's cgroup-root.
-    # With enforce-node-allocatable=none, cpuset/hugetlb are not required.
-    SELF_CGROUP=$(grep '^0::' /proc/self/cgroup 2>/dev/null | cut -d: -f3)
-    USER_CGROUP_ROOT=$(echo "$SELF_CGROUP" \
-        | grep -oE '/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service')
-    if [ -n "$USER_CGROUP_ROOT" ] && [ -w "/sys/fs/cgroup${USER_CGROUP_ROOT}" ]; then
-        echo "Using delegated user cgroup root: ${USER_CGROUP_ROOT}"
-        EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroup-root=${USER_CGROUP_ROOT}"
-    fi
+    echo "Detected rootless environment (uid 0 → host uid ${_HOST_UID}) — using k3s rootless mode"
+    ROOTLESS_MODE=true
 fi
 
 # Docker Desktop can briefly start the container before its bridge default route
@@ -538,5 +519,11 @@ fi
 wait_for_default_route
 
 # Execute k3s with explicit resolv-conf.
+# In rootless mode, pass --rootless so k3s uses rootlesskit to handle
+# cgroup delegation, networking, and user namespace setup internally.
 # shellcheck disable=SC2086
-exec /bin/k3s "$@" --resolv-conf="$RESOLV_CONF" $EXTRA_KUBELET_ARGS
+if $ROOTLESS_MODE; then
+    exec /bin/k3s "$@" --rootless --resolv-conf="$RESOLV_CONF" $EXTRA_KUBELET_ARGS
+else
+    exec /bin/k3s "$@" --resolv-conf="$RESOLV_CONF" $EXTRA_KUBELET_ARGS
+fi
