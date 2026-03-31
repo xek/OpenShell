@@ -507,10 +507,34 @@ fi
 # containers can often read /dev/kmsg via CAP_SYSLOG, but the uid_map
 # never lies about whether we are in a user namespace.
 _HOST_UID=$(awk 'NR==1 && $1==0 {print $2}' /proc/self/uid_map 2>/dev/null)
-ROOTLESS_MODE=false
 if [ "${_HOST_UID:-0}" != "0" ]; then
-    echo "Detected rootless environment (uid 0 → host uid ${_HOST_UID}) — using k3s rootless mode"
-    ROOTLESS_MODE=true
+    echo "Detected rootless environment (uid 0 → host uid ${_HOST_UID}) — adding kubelet user-namespace flags"
+    # KubeletInUserNamespace: kubelet ignores /dev/kmsg and oom_score_adj
+    # which are inaccessible in a user namespace.
+    # enforce-node-allocatable=none and cgroups-per-qos=false: relax resource
+    # accounting requirements that need cpuset/hugetlb controller delegation
+    # in the user session (not always available without system configuration).
+    EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=feature-gates=KubeletInUserNamespace=true"
+    EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=enforce-node-allocatable=none"
+    EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroups-per-qos=false"
+
+    # Find the writable user cgroup subtree for kubelet's cgroup-root.
+    # Only set if cpuset and hugetlb are delegated — kubelet rejects the path
+    # otherwise. Requires system-level delegation (see docs/podman-rootless.md).
+    SELF_CGROUP=$(grep '^0::' /proc/self/cgroup 2>/dev/null | cut -d: -f3)
+    USER_CGROUP_ROOT=$(echo "$SELF_CGROUP" \
+        | grep -oE '/user\.slice/user-[0-9]+\.slice/user@[0-9]+\.service')
+    if [ -n "$USER_CGROUP_ROOT" ] && [ -w "/sys/fs/cgroup${USER_CGROUP_ROOT}" ]; then
+        CGROUP_CONTROLLERS=$(cat "/sys/fs/cgroup${USER_CGROUP_ROOT}/cgroup.controllers" 2>/dev/null || true)
+        if echo "$CGROUP_CONTROLLERS" | grep -q "cpuset" && \
+           echo "$CGROUP_CONTROLLERS" | grep -q "hugetlb"; then
+            echo "Using delegated user cgroup root: ${USER_CGROUP_ROOT}"
+            EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroup-root=${USER_CGROUP_ROOT}"
+        else
+            echo "Warning: cpuset/hugetlb not delegated at ${USER_CGROUP_ROOT} — skipping cgroup-root (pod scheduling may fail)"
+            echo "  To fix: configure systemd to delegate these controllers to user sessions."
+        fi
+    fi
 fi
 
 # Docker Desktop can briefly start the container before its bridge default route
@@ -519,11 +543,5 @@ fi
 wait_for_default_route
 
 # Execute k3s with explicit resolv-conf.
-# In rootless mode, pass --rootless so k3s uses rootlesskit to handle
-# cgroup delegation, networking, and user namespace setup internally.
 # shellcheck disable=SC2086
-if $ROOTLESS_MODE; then
-    exec /bin/k3s "$@" --rootless --resolv-conf="$RESOLV_CONF" $EXTRA_KUBELET_ARGS
-else
-    exec /bin/k3s "$@" --resolv-conf="$RESOLV_CONF" $EXTRA_KUBELET_ARGS
-fi
+exec /bin/k3s "$@" --resolv-conf="$RESOLV_CONF" $EXTRA_KUBELET_ARGS
