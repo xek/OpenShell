@@ -909,9 +909,16 @@ pub async fn destroy_gateway_resources(docker: &Docker, name: &str) -> Result<()
 
     // Remove the gateway image so the next deploy always pulls the latest
     // version from the registry instead of reusing a stale local copy.
+    // Skip removal for locally-built images (no registry to pull from).
     // Docker may briefly report the container as still running after a
     // force-remove, so retry a few times on conflict (409) errors.
-    if let Some(ref image_id) = container_image {
+    let skip_image_removal = std::env::var("OPENSHELL_CLUSTER_IMAGE")
+        .ok()
+        .as_deref()
+        .map(image::is_local_image_ref)
+        .unwrap_or(false);
+    if !skip_image_removal
+        && let Some(ref image_id) = container_image {
         tracing::debug!("Removing gateway image: {}", image_id);
         let mut last_err = None;
         for attempt in 0..5 {

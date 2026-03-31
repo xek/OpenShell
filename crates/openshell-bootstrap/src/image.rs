@@ -269,9 +269,12 @@ pub async fn pull_remote_image(
 /// An image reference is considered "local-only" when the repository portion contains no `/`,
 /// meaning it has no registry or namespace prefix (e.g., `cluster-local:dev` vs
 /// `ghcr.io/org/image:tag` or `docker.io/library/nginx:latest`).
+///
+/// The `localhost/` prefix is always treated as local — Podman uses it to
+/// store locally-built images that have no remote registry backing.
 pub(crate) fn is_local_image_ref(image_ref: &str) -> bool {
     let (repo, _tag) = parse_image_ref(image_ref);
-    !repo.contains('/')
+    !repo.contains('/') || repo.starts_with("localhost/")
 }
 
 #[cfg(test)]
