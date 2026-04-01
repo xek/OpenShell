@@ -75,6 +75,13 @@ impl ProviderPlugin for VertexProvider {
             }
         }
 
+        // ANTHROPIC_BASE_URL routes Claude Code through the cluster inference proxy
+        // (inference.local), which injects the Vertex Bearer token on outbound calls.
+        credentials.insert(
+            "ANTHROPIC_BASE_URL".to_string(),
+            "https://inference.local".to_string(),
+        );
+
         Ok(Some(DiscoveredProvider {
             credentials,
             config,

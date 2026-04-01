@@ -171,6 +171,13 @@ impl CredentialRefresher for VertexRefresher {
             .as_secs() as i64;
 
         let mut updated = HashMap::new();
+        // ANTHROPIC_API_KEY lets Claude Code authenticate when ANTHROPIC_BASE_URL
+        // points at the cluster inference proxy (inference.local), which substitutes
+        // this token on outbound Vertex requests.
+        updated.insert(
+            "ANTHROPIC_API_KEY".to_string(),
+            token_resp.access_token.clone(),
+        );
         updated.insert("VERTEX_ACCESS_TOKEN".to_string(), token_resp.access_token);
         updated.insert(
             "VERTEX_TOKEN_EXPIRES_AT".to_string(),
