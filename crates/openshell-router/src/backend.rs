@@ -367,6 +367,11 @@ pub async fn proxy_to_backend_streaming(
 
 fn build_backend_url(endpoint: &str, path: &str) -> String {
     let base = endpoint.trim_end_matches('/');
+    // Vertex AI endpoints are self-contained (e.g. ending in :streamRawPredict).
+    // The client path (/v1/messages) must not be appended — the endpoint IS the path.
+    if base.contains(":rawPredict") || base.contains(":streamRawPredict") {
+        return base.to_string();
+    }
     if base.ends_with("/v1") && (path == "/v1" || path.starts_with("/v1/")) {
         return format!("{base}{}", &path[3..]);
     }

@@ -467,9 +467,39 @@ async fn resolve_route_by_name(
 
     let resolved = resolve_provider_route(&provider)?;
 
+    // For Vertex AI, the sandbox proxy needs the full endpoint URL including
+    // project, location, and model, because the Vertex API path differs from
+    // the Anthropic API path (/v1/messages vs /:streamRawPredict).
+    // The proxy passes through the client path unchanged; for Vertex we bake
+    // the full endpoint so the proxy ignores the client path.
+    let base_url = if resolved.provider_type == "vertex" {
+        let project = provider
+            .config
+            .get("VERTEX_PROJECT")
+            .cloned()
+            .unwrap_or_default();
+        let location = provider
+            .config
+            .get("VERTEX_LOCATION")
+            .cloned()
+            .unwrap_or_else(|| "us-central1".to_string());
+        // Vertex AI accepts both claude-3-5-haiku-20241022 and
+        // claude-3-5-haiku@20241022 — use the model_id as-is.
+        let model = &config.model_id;
+        format!(
+            "{}/v1/projects/{}/locations/{}/publishers/anthropic/models/{}:streamRawPredict",
+            resolved.route.endpoint.trim_end_matches('/'),
+            project.trim(),
+            location.trim(),
+            model.trim(),
+        )
+    } else {
+        resolved.route.endpoint
+    };
+
     Ok(Some(ResolvedRoute {
         name: route_name.to_string(),
-        base_url: resolved.route.endpoint,
+        base_url,
         model_id: config.model_id.clone(),
         api_key: resolved.route.api_key,
         protocols: resolved.route.protocols,
